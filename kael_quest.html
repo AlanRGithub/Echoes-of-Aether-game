@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Kael: El Corazón de Aether</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(76, 29, 149, 0.4);
+            border: 2px solid #333;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated; /* Crucial para el look 16-bit */
+        }
+
+        /* Efectos CRT y Scanlines */
+        .crt-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .vignette {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(0,0,0,0) 60%, rgba(0,0,0,0.8) 100%);
+            pointer-events: none;
+            z-index: 11;
+        }
+
+        .ui-text {
+            position: absolute;
+            color: #e0e0e0;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #4c1d95;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 5;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            color: #fff;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 40px;
+            color: #a78bfa;
+            text-shadow: 0 0 10px #7c3aed;
+            margin-bottom: 10px;
+        }
+
+        p { font-size: 14px; color: #ccc; max-width: 600px; line-height: 1.5; }
+        
+        .btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #4c1d95;
+            border: 2px solid #8b5cf6;
+            color: white;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+        .btn:hover { background: #6d28d9; box-shadow: 0 0 15px #8b5cf6; }
+
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="450"></canvas>
+    <div class="crt-overlay"></div>
+    <div class="vignette"></div>
+    
+    <div id="start-screen">
+        <h1>KAEL: EL CORAZÓN DE AETHER</h1>
+        <p>Las ruinas esperan. Los guardianes elementales acechan.</p>
+        <p>Recupera los fragmentos de energía para reconstruir el mundo.</p>
+        <br>
+        <p style="color: #fbbf24">CONTROLES: Flechas/WASD para Moverse | ESPACIO para Saltar | Z para Atacar</p>
+        <button class="btn" onclick="startGame()">INICIAR MISIÓN</button>
+    </div>
+
+    <div id="ui-layer" style="display:none;">
+        <div class="ui-text" style="top: 20px; left: 20px;">FRAGMENTOS: <span id="score">0</span>/5</div>
+        <div class="ui-text" style="top: 20px; right: 20px; color: #ef4444;">SALUD: <span id="health">100</span>%</div>
+        <div class="ui-text" style="bottom: 20px; left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.7;">Misión: Encuentra los Cristales Flotantes</div>
+    </div>
+</div>
+
+<script>
+/**
+ * MOTOR DEL JUEGO - ESTILO RETRO 16-BIT
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Configuración Global
+const GRAVITY = 0.5;
+const FRICTION = 0.8;
+let gameRunning = false;
+let frameCount = 0;
+let score = 0;
+let particles = [];
+let cameraX = 0;
+
+// Inputs
+const keys = {
+    right: false,
+    left: false,
+    up: false,
+    attack: false
+};
+
+document.addEventListener('keydown', (e) => {
+    if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+    if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+    if(e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+        if(!keys.up && player.grounded) player.velY = -10;
+        keys.up = true;
+    }
+    if(e.code === 'KeyZ' || e.code === 'Enter') {
+        if(!keys.attack) player.attack();
+        keys.attack = true;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+    if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+    if(e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') keys.up = false;
+    if(e.code === 'KeyZ' || e.code === 'Enter') keys.attack = false;
+});
+
+// Clases y Objetos
+
+class Player {
+    constructor() {
+        this.w = 24;
+        this.h = 36;
+        this.x = 100;
+        this.y = 300;
+        this.velX = 0;
+        this.velY = 0;
+        this.speed = 4;
+        this.jumpStrength = 10;
+        this.grounded = false;
+        this.facingRight = true;
+        this.color = '#a78bfa'; // Túnica
+        this.isAttacking = false;
+        this.attackTimer = 0;
+        this.hp = 100;
+    }
+
+    update() {
+        // Movimiento
+        if (keys.right) {
+            if (this.velX < this.speed) this.velX++;
+            this.facingRight = true;
+        }
+        if (keys.left) {
+            if (this.velX > -this.speed) this.velX--;
+            this.facingRight = false;
+        }
+
+        // Física
+        this.velX *= FRICTION;
+        this.velY += GRAVITY;
+
+        this.x += this.velX;
+        this.y += this.velY;
+
+        this.grounded = false;
+
+        // Colisión con plataformas
+        platforms.forEach(plat => {
+            const dir = colCheck(this, plat);
+            if (dir === "b") {
+                this.grounded = true;
+                this.velY = 0;
+            } else if (dir === "t") {
+                this.velY *= -0.5;
+            }
+        });
+
+        // Límites del mundo
+        if(this.x < 0) this.x = 0;
+        if(this.y > canvas.height + 100) { // Caída al vacío
+            this.hp = 0;
+            endGame();
+        }
+
+        // Ataque
+        if(this.isAttacking) {
+            this.attackTimer--;
+            if(this.attackTimer <= 0) this.isAttacking = false;
+            
+            // Hitbox de ataque
+            enemies.forEach(enemy => {
+                let attackRange = this.facingRight ? this.x + this.w : this.x - 40;
+                if(Math.abs(attackRange - enemy.x) < 40 && Math.abs(this.y - enemy.y) < 40) {
+                    enemy.takeDamage(1);
+                    createParticles(enemy.x + enemy.w/2, enemy.y + enemy.h/2, '#fff', 5);
+                }
+            });
+        }
+    }
+
+    attack() {
+        if(!this.isAttacking) {
+            this.isAttacking = true;
+            this.attackTimer = 15; // Duración del frame de ataque
+            // Efecto visual de bastón
+            createParticles(
+                this.facingRight ? this.x + this.w : this.x, 
+                this.y + this.h/2, 
+                '#60a5fa', 
+                10
+            );
+        }
+    }
+
+    draw() {
+        ctx.save();
+        
+        // Dibujo Pixel Art Procedural de Kael
+        
+        // Cuerpo/Túnica
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+        
+        // Capa desgastada (detalle)
+        ctx.fillStyle = '#7c3aed';
+        ctx.fillRect(this.x + 4, this.y + 10, this.w - 8, this.h - 10);
+
+        // Cabeza
+        ctx.fillStyle = '#fca5a5'; // Piel
+        ctx.fillRect(this.x + 4, this.y - 10, 16, 16);
+        
+        // Pelo/Gorro
+        ctx.fillStyle = '#312e81';
+        ctx.fillRect(this.x + 2, this.y - 14, 20, 8);
+
+        // Bastón Rúnico
+        ctx.fillStyle = '#d97706'; // Madera
+        let staffX = this.facingRight ? this.x + this.w + 4 : this.x - 8;
+        ctx.fillRect(staffX, this.y + 10, 4, 30);
+        
+        // Punta del bastón (Glow)
+        ctx.fillStyle = '#3b82f6';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#3b82f6';
+        ctx.fillRect(staffX - 2, this.y + 6, 8, 8);
+        ctx.shadowBlur = 0;
+
+        // Ojo
+        ctx.fillStyle = '#000';
+        if(this.facingRight) ctx.fillRect(this.x + 14, this.y - 6, 2, 2);
+        else ctx.fillRect(this.x + 8, this.y - 6, 2, 2);
+
+        ctx.restore();
+    }
+}
+
+class Enemy {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.w = 32;
+        this.h = 32;
+        this.type = type; // 'spirit', 'crystal_beast'
+        this.hp = 3;
+        this.velX = 1;
+        this.startX = x;
+        this.range = 100;
+        this.floatOffset = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        // Movimiento flotante/espectral
+        this.floatOffset += 0.05;
+        this.y += Math.sin(this.floatOffset) * 0.5;
+        
+        // Patrullar
+        this.x += this.velX;
+        if(this.x > this.startX + this.range || this.x < this.startX - this.range) {
+            this.velX *= -1;
+        }
+
+        // Colisión con jugador
+        if(checkCollision(player, this)) {
+            player.hp -= 1;
+            document.getElementById('health').innerText = Math.floor(player.hp);
+            createParticles(player.x + player.w/2, player.y + player.h/2, '#ef4444', 3);
+            if(player.hp <= 0) endGame();
+        }
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        // Empuje hacia atrás
+        this.x += player.facingRight ? 10 : -10;
+        if(this.hp <= 0) {
+            createParticles(this.x, this.y, '#a78bfa', 20);
+            return true; // Muerto
+        }
+        return false;
+    }
+
+    draw() {
+        ctx.save();
+        if(this.type === 'spirit') {
+            // Espíritu de fuego flotante
+            ctx.fillStyle = `rgba(239, 68, 68, ${0.6 + Math.sin(this.floatOffset)*0.2})`;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(this.x + this.w/2, this.y + this.h/2, 12, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Ojos brillantes
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(this.x + 10, this.y + 12, 4, 4);
+            ctx.fillRect(this.x + 20, this.y + 12, 4, 4);
+        } else {
+            // Bestia de cristal
+            ctx.fillStyle = '#22d3ee';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#06b6d4';
+            ctx.beginPath();
+            ctx.moveTo(this.x + 16, this.y);
+            ctx.lineTo(this.x + 32, this.y + 16);
+            ctx.lineTo(this.x + 16, this.y + 32);
+            ctx.lineTo(this.x, this.y + 16);
+            ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+}
+
+class Crystal {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 30;
+        this.collected = false;
+        this.floatY = 0;
+    }
+
+    update() {
+        this.floatY = Math.sin(frameCount * 0.05) * 5;
+        
+        if(!this.collected && checkCollision(player, {x: this.x, y: this.y + this.floatY, w: this.w, h: this.h})) {
+            this.collected = true;
+            score++;
+            document.getElementById('score').innerText = score;
+            createParticles(this.x, this.y, '#fbbf24', 30);
+            if(score >= 5) winGame();
+        }
+    }
+
+    draw() {
+        if(this.collected) return;
+        ctx.save();
+        ctx.translate(this.x + this.w/2, this.y + this.h/2 + this.floatY);
+        
+        // Brillo interior
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#fbbf24';
+        ctx.fillStyle = '#fef3c7';
+        
+        // Forma de cristal
+        ctx.beginPath();
+        ctx.moveTo(0, -15);
+        ctx.lineTo(10, 0);
+        ctx.lineTo(0, 15);
+        ctx.lineTo(-10, 0);
+        ctx.fill();
+        
+        ctx.restore();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = Math.random() * 4 + 2;
+        this.velX = (Math.random() - 0.5) * 6;
+        this.velY = (Math.random() - 0.5) * 6;
+        this.life = 1.0;
+    }
+    update() {
+        this.x += this.velX;
+        this.y += this.velY;
+        this.life -= 0.05;
+        this.size *= 0.9;
+    }
+    draw() {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+// Variables de Juego
+let player;
+let platforms = [];
+let enemies = [];
+let crystals = [];
+let bgCreatures = [];
+
+function init() {
+    player = new Player();
+    platforms = [];
+    enemies = [];
+    crystals = [];
+    bgCreatures = [];
+    particles = [];
+    score = 0;
+    document.getElementById('score').innerText = '0';
+    document.getElementById('health').innerText = '100';
+
+    // Generación de Nivel (Ruinas)
+    // Suelo base
+    for(let i=0; i<30; i++) {
+        if(i !== 5 && i !== 12 && i !== 18) { // Huecos
+            platforms.push({x: i*100, y: 400, w: 100, h: 50, type: 'ground'});
+        }
+    }
+
+    // Plataformas elevadas y Ruinas
+    const ruins = [
+        {x: 300, y: 300, w: 150, h: 20},
+        {x: 500, y: 220, w: 100, h: 20},
+        {x: 700, y: 300, w: 150, h: 20},
+        {x: 900, y: 180, w: 200, h: 20},
+        {x: 1200, y: 250, w: 100, h: 20},
+        {x: 1400, y: 350, w: 300, h: 50}, // Final area
+    ];
+    
+    ruins.forEach(r => platforms.push({...r, type: 'ruin'}));
+
+    // Enemigos
+    enemies.push(new Enemy(400, 350, 'spirit'));
+    enemies.push(new Enemy(800, 250, 'crystal_beast'));
+    enemies.push(new Enemy(1000, 130, 'spirit'));
+    enemies.push(new Enemy(1300, 300, 'crystal_beast'));
+
+    // Cristales (Objetivos)
+    crystals.push(new Crystal(350, 250));
+    crystals.push(new Crystal(550, 170));
+    crystals.push(new Crystal(950, 130));
+    crystals.push(new Crystal(1250, 200));
+    crystals.push(new Crystal(1550, 300));
+
+    // Criaturas de fondo (Dragones de viento, etc)
+    for(let i=0; i<5; i++) {
+        bgCreatures.push({
+            x: Math.random() * 2000,
+            y: Math.random() * 200 + 50,
+            size: Math.random() * 20 + 30,
+            speed: Math.random() * 0.5 + 0.2,
+            color: Math.random() > 0.5 ? 'rgba(100, 200, 255, 0.3)' : 'rgba(200, 100, 255, 0.3)'
+        });
+    }
+}
+
+function createParticles(x, y, color, count) {
+    for(let i=0; i<count; i++) {
+        particles.push(new Particle(x, y, color));
+    }
+}
+
+function checkCollision(shapeA, shapeB) {
+    return (shapeA.x < shapeB.x + shapeB.w &&
+            shapeA.x + shapeA.w > shapeB.x &&
+            shapeA.y < shapeB.y + shapeB.h &&
+            shapeA.y + shapeA.h > shapeB.y);
+}
+
+// Detección de colisión simple AABB con resolución
+function colCheck(shapeA, shapeB) {
+    let vX = (shapeA.x + (shapeA.w / 2)) - (shapeB.x + (shapeB.w / 2));
+    let vY = (shapeA.y + (shapeA.h / 2)) - (shapeB.y + (shapeB.h / 2));
+    let hWidths = (shapeA.w / 2) + (shapeB.w / 2);
+    let hHeights = (shapeA.h / 2) + (shapeB.h / 2);
+    let colDir = null;
+
+    if (Math.abs(vX) < hWidths && Math.abs(vY) < hHeights) {
+        let oX = hWidths - Math.abs(vX);
+        let oY = hHeights - Math.abs(vY);
+        if (oX >= oY) {
+            if (vY > 0) {
+                colDir = "t";
+                shapeA.y += oY;
+                shapeA.velY = 0;
+            } else {
+                colDir = "b";
+                shapeA.y -= oY;
+                shapeA.velY = 0;
+            }
+        } else {
+            if (vX > 0) {
+                colDir = "l";
+                shapeA.x += oX;
+                shapeA.velX = 0;
+            } else {
+                colDir = "r";
+                shapeA.x -= oX;
+                shapeA.velX = 0;
+            }
+        }
+    }
+    return colDir;
+}
+
+function drawBackground() {
+    // Cielo oscuro degradado
+    let grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0, "#0f0c29");
+    grad.addColorStop(0.5, "#302b63");
+    grad.addColorStop(1, "#24243e");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Estrellas parpadeantes
+    ctx.fillStyle = "#fff";
+    for(let i=0; i<50; i++) {
+        let sx = (i * 137) % canvas.width;
+        let sy = (i * 93) % (canvas.height/2);
+        if(Math.random() > 0.95) ctx.fillRect(sx, sy, 2, 2);
+        else ctx.fillRect(sx, sy, 1, 1);
+    }
+
+    // Criaturas Mágicas Etéreas (Fondo Parallax)
+    bgCreatures.forEach(creature => {
+        creature.x -= creature.speed;
+        if(creature.x < -100) creature.x = canvas.width + 100;
+        
+        ctx.fillStyle = creature.color;
+        ctx.beginPath();
+        // Forma de dragón abstracto
+        ctx.moveTo(creature.x, creature.y);
+        ctx.quadraticCurveTo(creature.x + creature.size/2, creature.y - creature.size, creature.x + creature.size, creature.y);
+        ctx.quadraticCurveTo(creature.x + creature.size/2, creature.y + creature.size, creature.x, creature.y);
+        ctx.fill();
+    });
+
+    // Ruinas lejanas (Parallax lento)
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(100 - cameraX*0.2, 200, 200, 250);
+    ctx.fillRect(500 - cameraX*0.2, 150, 150, 300);
+    ctx.fillRect(900 - cameraX*0.2, 250, 300, 200);
+}
+
+function drawWorld() {
+    ctx.save();
+    // Cámara sigue al jugador
+    cameraX = player.x - 300;
+    ctx.translate(-cameraX, 0);
+
+    // Dibujar Plataformas
+    platforms.forEach(p => {
+        if(p.type === 'ground') {
+            ctx.fillStyle = "#1e293b"; // Piedra oscura
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            // Musgo
+            ctx.fillStyle = "#064e3b";
+            ctx.fillRect(p.x, p.y, p.w, 10);
+        } else {
+            // Ruinas arcanas
+            ctx.fillStyle = "#312e81";
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            // Detalles rúnicos brillantes
+            ctx.fillStyle = "#4c1d95";
+            ctx.fillRect(p.x + 10, p.y + 5, p.w - 20, 5);
+        }
+    });
+
+    // Portales dimensionales (Decoración)
+    ctx.fillStyle = "rgba(124, 58, 237, 0.3)";
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#8b5cf6";
+    ctx.beginPath();
+    ctx.ellipse(1100, 350, 40, 80, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Entidades
+    crystals.forEach(c => c.update(), c.draw());
+    // Filtrar enemigos muertos
+    enemies = enemies.filter(e => !e.update()); 
+    enemies.forEach(e => e.draw());
+    
+    player.update();
+    player.draw();
+
+    // Partículas
+    particles.forEach((p, index) => {
+        p.update();
+        p.draw();
+        if(p.life <= 0) particles.splice(index, 1);
+    });
+
+    ctx.restore();
+}
+
+function gameLoop() {
+    if(!gameRunning) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    drawBackground();
+    drawWorld();
+
+    // Efecto Glitch sutil aleatorio
+    if(Math.random() > 0.98) {
+        const sliceHeight = Math.random() * 20;
+        const sliceY = Math.random() * canvas.height;
+        const offset = (Math.random() - 0.5) * 10;
+        ctx.drawImage(canvas, 0, sliceY, canvas.width, sliceHeight, offset, sliceY, canvas.width, sliceHeight);
+    }
+
+    frameCount++;
+    requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('ui-layer').style.display = 'block';
+    init();
+    gameRunning = true;
+    gameLoop();
+}
+
+function endGame() {
+    gameRunning = false;
+    alert("KAEL HA CAÍDO. Las ruinas consumen su alma. Inténtalo de nuevo.");
+    location.reload();
+}
+
+function winGame() {
+    gameRunning = false;
+    alert("¡ÉXITO! Kael ha reunido los fragmentos. El Corazón de Aether late de nuevo. ¡El mundo renace!");
+    location.reload();
+}
+
+</script>
+</body>
+</html>
